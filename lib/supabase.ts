@@ -14,3 +14,17 @@ export type Task = {
   created_at: string
   updated_at: string
 }
+
+export type Person = {
+  id: string
+  name: string
+  howIKnowThem: string
+  tags: string[]
+  tagInput?: string
+  description?: string
+  birthday?: string
+  giftIdeas?: string
+  lastHangoutDate?: string
+  created_at: string
+  updated_at: string
+}
