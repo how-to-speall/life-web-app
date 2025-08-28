@@ -1,11 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, CheckCircle2, Circle, Trash2 } from 'lucide-react'
+import { Plus, CheckCircle2, Circle, Trash2, LogOut, User } from 'lucide-react'
 import { supabase, Task, Person, Habit, HabitLog } from '../../lib/supabase'
 import { useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext'
+import LoginPage from '../components/LoginPage'
 
 export default function Home() {
+  const { user, session, loading, signOut } = useAuth()
   const [activeTab, setActiveTab] = useState('tasks')
   const [tasks, setTasks] = useState<Task[]>([])
   const [people, setPeople] = useState<Person[]>([])
@@ -39,10 +42,12 @@ export default function Home() {
   const [editingPerson, setEditingPerson] = useState<Person | null>(null)
 
   useEffect(() => {
-    fetchTasks()
-    fetchPeople()
-    fetchHabits()
-  }, [])
+    if (user) {
+      fetchTasks()
+      fetchPeople()
+      fetchHabits()
+    }
+  }, [user])
 
   const fetchTasks = async () => {
     try {
@@ -101,12 +106,13 @@ export default function Home() {
   }
 
   const createTask = async () => {
-    if (!newTask.title.trim()) return
+    if (!newTask.title.trim() || !user) return
 
     try {
       const { error } = await supabase
         .from('tasks')
         .insert([{
+          user_id: user.id,
           title: newTask.title,
           description: newTask.description || null,
           deadline: newTask.deadline || null,
@@ -124,12 +130,13 @@ export default function Home() {
   }
 
   const createPerson = async () => {
-    if (!newPerson.name.trim()) return
+    if (!newPerson.name.trim() || !user) return
 
     try {
       const { error } = await supabase
         .from('people')
         .insert([{
+          user_id: user.id,
           name: newPerson.name,
           howIKnowThem: newPerson.howIKnowThem,
           tags: newPerson.tags,
@@ -159,12 +166,13 @@ export default function Home() {
   }
 
   const createHabit = async () => {
-    if (!newHabit.name.trim()) return
+    if (!newHabit.name.trim() || !user) return
 
     try {
       const { error } = await supabase
         .from('habits')
         .insert([{
+          user_id: user.id,
           name: newHabit.name,
           description: newHabit.description || null
         }])
@@ -180,7 +188,7 @@ export default function Home() {
   }
 
   const updatePerson = async () => {
-    if (!editingPerson || !editingPerson.name.trim()) return
+    if (!editingPerson || !editingPerson.name.trim() || !user) return
 
     try {
       const { error } = await supabase
@@ -195,6 +203,7 @@ export default function Home() {
           "lastHangoutDate": editingPerson.lastHangoutDate || null
         })
         .eq('id', editingPerson.id)
+        .eq('user_id', user.id) // Ensure user can only update their own data
       
       if (error) throw error
       
@@ -229,6 +238,8 @@ export default function Home() {
   }
 
   const toggleHabit = async (habitId: string) => {
+    if (!user) return
+    
     const today = new Date().toISOString().split('T')[0]
     const existingLog = habitLogs.find(log => 
       log.habit_id === habitId && log.completed_date === today
@@ -248,6 +259,7 @@ export default function Home() {
         const { error } = await supabase
           .from('habit_logs')
           .insert([{
+            user_id: user.id,
             habit_id: habitId,
             completed_date: today
           }])
@@ -448,12 +460,44 @@ export default function Home() {
     { id: 'habits', label: 'Habits' }
   ]
 
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show login page if not authenticated
+  if (!user || !session) {
+    return <LoginPage />
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-md mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold text-gray-900 text-center">Life App</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-gray-900">Life App</h1>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <User size={16} />
+                <span>{user.email}</span>
+              </div>
+              <button
+                onClick={signOut}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+                title="Sign out"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

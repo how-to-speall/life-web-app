@@ -1,4 +1,4 @@
--- Life Web App Database Schema
+-- Life Web App Database Schema with User Authentication
 -- Run this in your Supabase SQL Editor
 
 -- Drop existing tables if they exist (optional - only if you want to start fresh)
@@ -7,9 +7,10 @@ DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS habits CASCADE;
 DROP TABLE IF EXISTS habit_logs CASCADE;
 
--- Create the tasks table
+-- Create the tasks table with user_id
 CREATE TABLE tasks (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   title TEXT NOT NULL,
   description TEXT,
   deadline TIMESTAMP WITH TIME ZONE,
@@ -18,9 +19,10 @@ CREATE TABLE tasks (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create the people table
+-- Create the people table with user_id
 CREATE TABLE people (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   name TEXT NOT NULL,
   "howIKnowThem" TEXT NOT NULL,
   tags TEXT[] DEFAULT '{}',
@@ -32,46 +34,94 @@ CREATE TABLE people (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create the habits table
+-- Create the habits table with user_id
 CREATE TABLE habits (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create the habit_logs table
+-- Create the habit_logs table with user_id
 CREATE TABLE habit_logs (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  habit_id UUID REFERENCES habits(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  habit_id UUID REFERENCES habits(id) ON DELETE CASCADE NOT NULL,
   completed_date DATE NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(habit_id, completed_date)
 );
 
--- Enable Row Level Security (recommended for production)
+-- Enable Row Level Security (RLS) on all tables
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE people ENABLE ROW LEVEL SECURITY;
 ALTER TABLE habits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE habit_logs ENABLE ROW LEVEL SECURITY;
 
--- Create policies that allow all operations (for demo purposes)
--- In production, you might want to restrict this based on user authentication
-CREATE POLICY "Allow all operations on tasks" ON tasks FOR ALL USING (true);
-CREATE POLICY "Allow all operations on people" ON people FOR ALL USING (true);
-CREATE POLICY "Allow all operations on habits" ON habits FOR ALL USING (true);
-CREATE POLICY "Allow all operations on habit_logs" ON habit_logs FOR ALL USING (true);
+-- Create RLS policies for user data isolation
+-- Users can only see and modify their own data
+
+-- Tasks policies
+CREATE POLICY "Users can view own tasks" ON tasks
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own tasks" ON tasks
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own tasks" ON tasks
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own tasks" ON tasks
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- People policies
+CREATE POLICY "Users can view own people" ON people
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own people" ON people
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own people" ON people
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own people" ON people
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Habits policies
+CREATE POLICY "Users can view own habits" ON habits
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own habits" ON habits
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own habits" ON habits
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own habits" ON habits
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Habit logs policies
+CREATE POLICY "Users can view own habit logs" ON habit_logs
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own habit logs" ON habit_logs
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own habit logs" ON habit_logs
+  FOR DELETE USING (auth.uid() = user_id);
 
 -- Create indexes for better performance
-CREATE INDEX idx_tasks_created_at ON tasks(created_at DESC);
-CREATE INDEX idx_tasks_completed ON tasks(completed);
-CREATE INDEX idx_people_name ON people(name);
-CREATE INDEX idx_people_tags ON people USING GIN(tags);
-CREATE INDEX idx_people_birthday ON people(birthday);
-CREATE INDEX idx_people_last_hangout ON people("lastHangoutDate");
-CREATE INDEX idx_habits_name ON habits(name);
-CREATE INDEX idx_habit_logs_habit_date ON habit_logs(habit_id, completed_date);
+CREATE INDEX idx_tasks_user_created ON tasks(user_id, created_at DESC);
+CREATE INDEX idx_tasks_user_completed ON tasks(user_id, completed);
+CREATE INDEX idx_people_user_name ON people(user_id, name);
+CREATE INDEX idx_people_user_tags ON people USING GIN(tags);
+CREATE INDEX idx_people_user_id ON people(user_id);
+CREATE INDEX idx_people_user_birthday ON people(user_id, birthday);
+CREATE INDEX idx_people_user_last_hangout ON people(user_id, "lastHangoutDate");
+CREATE INDEX idx_habits_user_name ON habits(user_id, name);
+CREATE INDEX idx_habit_logs_user_habit_date ON habit_logs(user_id, habit_id, completed_date);
 
 -- Optional: Create a function to automatically update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -98,22 +148,5 @@ CREATE TRIGGER update_habits_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
--- Insert some sample data (optional)
-INSERT INTO tasks (title, description, deadline, completed) VALUES
-('Complete project proposal', 'Write up the initial project proposal document', NOW() + INTERVAL '3 days', false),
-('Buy groceries', 'Milk, bread, eggs, and vegetables', NOW() + INTERVAL '1 day', false),
-('Call dentist', 'Schedule annual checkup', NOW() + INTERVAL '1 week', false),
-('Read new book', 'Start reading the new programming book', NOW() + INTERVAL '2 weeks', false);
-
--- Insert sample people data
-INSERT INTO people (name, "howIKnowThem", tags, description, birthday, "giftIdeas", "lastHangoutDate") VALUES
-('Sarah Johnson', 'Met in freshman biology class', ARRAY['college', 'biology'], 'Really smart and loves coffee', '1995-03-15', 'Coffee gift cards, science books, plants', '2024-01-15'),
-('Mike Chen', 'Work colleague from previous job', ARRAY['work', 'tech'], 'Great developer, loves board games', '1988-07-22', 'Board games, tech gadgets, craft beer', '2024-02-01'),
-('Emma Davis', 'Neighbor from apartment building', ARRAY['neighbor', 'yoga'], 'Yoga instructor, very friendly', '1992-11-08', 'Yoga mats, wellness books, tea', '2024-01-28');
-
--- Insert sample habits data
-INSERT INTO habits (name, description) VALUES
-('Morning Exercise', '30 minutes of cardio or strength training'),
-('Read Daily', 'Read at least 20 pages from a book'),
-('Drink Water', 'Drink 8 glasses of water throughout the day'),
-('Meditate', '10 minutes of mindfulness meditation');
+-- Note: Sample data will be created by users after they sign up
+-- No pre-populated data since each user starts fresh
