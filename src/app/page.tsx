@@ -2,15 +2,18 @@
 
 import { useState } from 'react'
 import { Plus, CheckCircle2, Circle, Trash2 } from 'lucide-react'
-import { supabase, Task, Person } from '../../lib/supabase'
+import { supabase, Task, Person, Habit, HabitLog } from '../../lib/supabase'
 import { useEffect } from 'react'
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('tasks')
   const [tasks, setTasks] = useState<Task[]>([])
   const [people, setPeople] = useState<Person[]>([])
+  const [habits, setHabits] = useState<Habit[]>([])
+  const [habitLogs, setHabitLogs] = useState<HabitLog[]>([])
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [showCreatePersonForm, setShowCreatePersonForm] = useState(false)
+  const [showCreateHabitForm, setShowCreateHabitForm] = useState(false)
   const [newTask, setNewTask] = useState({
     title: '',
     description: '',
@@ -26,6 +29,10 @@ export default function Home() {
     giftIdeas: '',
     lastHangoutDate: ''
   })
+  const [newHabit, setNewHabit] = useState({
+    name: '',
+    description: ''
+  })
   const [allTags, setAllTags] = useState<string[]>([])
   const [sortBy, setSortBy] = useState<'name' | 'lastHangout' | 'birthday'>('name')
   const [filterTag, setFilterTag] = useState<string>('')
@@ -34,6 +41,7 @@ export default function Home() {
   useEffect(() => {
     fetchTasks()
     fetchPeople()
+    fetchHabits()
   }, [])
 
   const fetchTasks = async () => {
@@ -68,6 +76,27 @@ export default function Home() {
       setAllTags(Array.from(tags))
     } catch (error) {
       console.error('Error fetching people:', error)
+    }
+  }
+
+  const fetchHabits = async () => {
+    try {
+      const { data: habitsData, error: habitsError } = await supabase
+        .from('habits')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (habitsError) throw habitsError
+      setHabits(habitsData || [])
+
+      const { data: logsData, error: logsError } = await supabase
+        .from('habit_logs')
+        .select('*')
+      
+      if (logsError) throw logsError
+      setHabitLogs(logsData || [])
+    } catch (error) {
+      console.error('Error fetching habits:', error)
     }
   }
 
@@ -129,6 +158,27 @@ export default function Home() {
     }
   }
 
+  const createHabit = async () => {
+    if (!newHabit.name.trim()) return
+
+    try {
+      const { error } = await supabase
+        .from('habits')
+        .insert([{
+          name: newHabit.name,
+          description: newHabit.description || null
+        }])
+      
+      if (error) throw error
+      
+      setNewHabit({ name: '', description: '' })
+      setShowCreateHabitForm(false)
+      fetchHabits()
+    } catch (error) {
+      console.error('Error creating habit:', error)
+    }
+  }
+
   const updatePerson = async () => {
     if (!editingPerson || !editingPerson.name.trim()) return
 
@@ -175,6 +225,65 @@ export default function Home() {
       fetchPeople()
     } catch (error) {
       console.error('Error deleting person:', error)
+    }
+  }
+
+  const toggleHabit = async (habitId: string) => {
+    const today = new Date().toISOString().split('T')[0]
+    const existingLog = habitLogs.find(log => 
+      log.habit_id === habitId && log.completed_date === today
+    )
+
+    try {
+      if (existingLog) {
+        // Remove today's log
+        const { error } = await supabase
+          .from('habit_logs')
+          .delete()
+          .eq('id', existingLog.id)
+        
+        if (error) throw error
+      } else {
+        // Add today's log
+        const { error } = await supabase
+          .from('habit_logs')
+          .insert([{
+            habit_id: habitId,
+            completed_date: today
+          }])
+        
+        if (error) throw error
+      }
+      
+      fetchHabits()
+    } catch (error) {
+      console.error('Error toggling habit:', error)
+    }
+  }
+
+  const deleteHabit = async (habitId: string) => {
+    if (!confirm('Are you sure you want to delete this habit? This will also delete all its logs.')) return
+
+    try {
+      // Delete all logs for this habit first
+      const { error: logsError } = await supabase
+        .from('habit_logs')
+        .delete()
+        .eq('habit_id', habitId)
+      
+      if (logsError) throw logsError
+
+      // Delete the habit
+      const { error: habitError } = await supabase
+        .from('habits')
+        .delete()
+        .eq('id', habitId)
+      
+      if (habitError) throw habitError
+      
+      fetchHabits()
+    } catch (error) {
+      console.error('Error deleting habit:', error)
     }
   }
 
@@ -228,6 +337,83 @@ export default function Home() {
     return Math.ceil((nextBirthday.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
   }
 
+  const getHabitStats = (habitId: string) => {
+    const today = new Date().toISOString().split('T')[0]
+    const now = new Date()
+    const startOfWeek = new Date(now.getTime() - (now.getDay() * 24 * 60 * 60 * 1000))
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    
+    const habitLogsForHabit = habitLogs.filter(log => log.habit_id === habitId)
+    const isCompletedToday = habitLogsForHabit.some(log => log.completed_date === today)
+    
+    // Weekly count
+    const weeklyCount = habitLogsForHabit.filter(log => 
+      new Date(log.completed_date) >= startOfWeek
+    ).length
+    
+    // Monthly count
+    const monthlyCount = habitLogsForHabit.filter(log => 
+      new Date(log.completed_date) >= startOfMonth
+    ).length
+    
+    // Current streak calculation
+    let currentStreak = 0
+    let currentDate = new Date()
+    
+    if (isCompletedToday) {
+      // Count forward from today
+      while (true) {
+        const dateStr = currentDate.toISOString().split('T')[0]
+        if (habitLogsForHabit.some(log => log.completed_date === dateStr)) {
+          currentStreak++
+          currentDate.setDate(currentDate.getDate() + 1)
+        } else {
+          break
+        }
+      }
+    } else {
+      // Count backward from yesterday
+      currentDate.setDate(currentDate.getDate() - 1)
+      while (true) {
+        const dateStr = currentDate.toISOString().split('T')[0]
+        if (habitLogsForHabit.some(log => log.completed_date === dateStr)) {
+          currentStreak++
+          currentDate.setDate(currentDate.getDate() - 1)
+        } else {
+          break
+        }
+      }
+      // Make negative if not completed today
+      currentStreak = -currentStreak
+    }
+    
+    // Longest streak calculation
+    let longestStreak = 0
+    let tempStreak = 0
+    const sortedDates = habitLogsForHabit
+      .map(log => log.completed_date)
+      .sort()
+      .map(date => new Date(date))
+    
+    for (let i = 0; i < sortedDates.length; i++) {
+      if (i === 0 || 
+          (sortedDates[i].getTime() - sortedDates[i-1].getTime()) === (24 * 60 * 60 * 1000)) {
+        tempStreak++
+        longestStreak = Math.max(longestStreak, tempStreak)
+      } else {
+        tempStreak = 1
+      }
+    }
+    
+    return {
+      isCompletedToday,
+      weeklyCount,
+      monthlyCount,
+      currentStreak,
+      longestStreak
+    }
+  }
+
   const toggleTask = async (taskId: string, completed: boolean) => {
     try {
       const { error } = await supabase
@@ -259,7 +445,6 @@ export default function Home() {
   const tabs = [
     { id: 'tasks', label: 'Tasks' },
     { id: 'people', label: 'People' },
-    { id: 'goals', label: 'Goals' },
     { id: 'habits', label: 'Habits' }
   ]
 
@@ -695,15 +880,69 @@ export default function Home() {
           </div>
         )}
 
-        {activeTab === 'goals' && (
-          <div className="text-center text-gray-500 py-8">
-            Goals feature coming soon...
-          </div>
-        )}
-
         {activeTab === 'habits' && (
-          <div className="text-center text-gray-500 py-8">
-            Habits feature coming soon...
+          <div className="space-y-4">
+            {/* Create Button */}
+            <button
+              onClick={() => setShowCreateHabitForm(true)}
+              className="w-full bg-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-purple-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus size={20} />
+              Create Habit
+            </button>
+
+            {/* Create Habit Form */}
+            {showCreateHabitForm && (
+              <div className="bg-white p-4 rounded-lg shadow-sm border space-y-4">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Create New Habit</h3>
+                <input
+                  type="text"
+                  placeholder="Habit name *"
+                  value={newHabit.name}
+                  onChange={(e) => setNewHabit({ ...newHabit, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 placeholder-gray-500 bg-white"
+                />
+                <textarea
+                  placeholder="Description (optional)"
+                  value={newHabit.description}
+                  onChange={(e) => setNewHabit({ ...newHabit, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900 placeholder-gray-500 bg-white resize-none"
+                  rows={3}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={createHabit}
+                    className="flex-1 bg-purple-600 text-white py-2 px-4 rounded-md hover:bg-purple-700 transition-colors"
+                  >
+                    Create Habit
+                  </button>
+                  <button
+                    onClick={() => setShowCreateHabitForm(false)}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Habits List */}
+            <div className="space-y-3">
+              {habits.map((habit) => (
+                <HabitItem
+                  key={habit.id}
+                  habit={habit}
+                  onToggle={toggleHabit}
+                  onDelete={deleteHabit}
+                  stats={getHabitStats(habit.id)}
+                />
+              ))}
+              {habits.length === 0 && (
+                <div className="text-center text-gray-500 py-8">
+                  No habits yet. Create your first habit!
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -962,6 +1201,106 @@ function PersonItem({
             Delete Person
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// Habit Item Component
+function HabitItem({ 
+  habit, 
+  onToggle, 
+  onDelete,
+  stats
+}: { 
+  habit: Habit
+  onToggle: (id: string) => void
+  onDelete: (id: string) => void
+  stats: {
+    isCompletedToday: boolean
+    weeklyCount: number
+    monthlyCount: number
+    currentStreak: number
+    longestStreak: number
+  }
+}) {
+  const getStreakColor = (streak: number) => {
+    if (streak > 0) return 'text-green-600'
+    if (streak < 0) return 'text-red-600'
+    return 'text-gray-600'
+  }
+
+  const getStreakText = (streak: number) => {
+    if (streak > 0) return `${streak} day${streak > 1 ? 's' : ''}`
+    if (streak < 0) return `Missed ${Math.abs(streak)} day${Math.abs(streak) > 1 ? 's' : ''}`
+    return 'No streak'
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex-1">
+            <h3 className="font-medium text-gray-900 text-lg">{habit.name}</h3>
+            {habit.description && (
+              <p className="text-sm text-gray-600 mt-1">{habit.description}</p>
+            )}
+          </div>
+          
+          {/* Today Toggle */}
+          <button
+            onClick={() => onToggle(habit.id)}
+            className={`ml-3 p-2 rounded-full transition-colors ${
+              stats.isCompletedToday 
+                ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {stats.isCompletedToday ? (
+              <CheckCircle2 size={24} className="fill-current" />
+            ) : (
+              <Circle size={24} />
+            )}
+          </button>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          {/* Weekly Count */}
+          <div className="bg-blue-50 p-3 rounded-lg">
+            <p className="text-blue-600 font-medium">This Week</p>
+            <p className="text-blue-800 text-lg font-bold">{stats.weeklyCount}</p>
+          </div>
+          
+          {/* Monthly Count */}
+          <div className="bg-purple-50 p-3 rounded-lg">
+            <p className="text-purple-600 font-medium">This Month</p>
+            <p className="text-purple-800 text-lg font-bold">{stats.monthlyCount}</p>
+          </div>
+          
+          {/* Current Streak */}
+          <div className="bg-orange-50 p-3 rounded-lg">
+            <p className="text-orange-600 font-medium">Current Streak</p>
+            <p className={`text-lg font-bold ${getStreakColor(stats.currentStreak)}`}>
+              {getStreakText(stats.currentStreak)}
+            </p>
+          </div>
+          
+          {/* Longest Streak */}
+          <div className="bg-green-50 p-3 rounded-lg">
+            <p className="text-green-600 font-medium">Longest Streak</p>
+            <p className="text-green-800 text-lg font-bold">{stats.longestStreak} days</p>
+          </div>
+        </div>
+
+        {/* Delete Button */}
+        <button
+          onClick={() => onDelete(habit.id)}
+          className="mt-3 w-full bg-red-100 text-red-700 py-2 px-4 rounded-md hover:bg-red-200 transition-colors text-sm"
+        >
+          Delete Habit
+        </button>
       </div>
     </div>
   )

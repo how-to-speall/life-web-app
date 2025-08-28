@@ -28,3 +28,18 @@ export type Person = {
   created_at: string
   updated_at: string
 }
+
+export type Habit = {
+  id: string
+  name: string
+  description?: string
+  created_at: string
+  updated_at: string
+}
+
+export type HabitLog = {
+  id: string
+  habit_id: string
+  completed_date: string
+  created_at: string
+}
